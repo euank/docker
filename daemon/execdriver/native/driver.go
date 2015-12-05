@@ -171,7 +171,10 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 		return execdriver.ExitStatus{ExitCode: -1}, err
 	}
 
+	// 'oom' is used to emit 'oom' events to the eventstream, 'oomKilled' is used
+	// to set the 'OOMKilled' flag in state
 	oom := notifyOnOOM(cont)
+	oomKilled := notifyOnOOM(cont)
 	if hooks.Start != nil {
 		pid, err := p.Pid()
 		if err != nil {
@@ -198,7 +201,17 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 	}
 	cont.Destroy()
 	destroyed = true
-	_, oomKill := <-oom
+	// Note: oomKilled will have an oom event if any process within the container
+	// died at any time, not only if the init process OOMed
+	// TODO, perhaps we only want the OOMKilled flag to be set if the OOM
+	// resulted in a container death (pid1 OOMd)
+	// Loop through all oomKilled values so we don't leak a goroutine in
+	// libcontainer
+	oomKill := false
+	for range oomKilled {
+		// one or more oomKills happened
+		oomKill = true
+	}
 	return execdriver.ExitStatus{ExitCode: utils.ExitStatus(ps.Sys().(syscall.WaitStatus)), OOMKilled: oomKill}, nil
 }
 
