@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -555,7 +556,7 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, retErr e
 	}
 	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", strings.Join(absLowers, ":"), path.Join(dir, "diff"), path.Join(dir, "work"))
 	mountData := label.FormatMountLabel(opts, mountLabel)
-	mount := unix.Mount
+	mount := mountRetryEbusy
 	mountTarget := mergedDir
 
 	pageSize := unix.Getpagesize()
@@ -602,6 +603,21 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, retErr e
 	}
 
 	return containerfs.NewLocalContainerFS(mergedDir), nil
+}
+
+func mountRetryEbusy(source string, target string, fstype string, flags uintptr, data string) error {
+	var err error
+	for i := 0; i < 10; i++ {
+		err = unix.Mount(source, target, fstype, flags, data)
+		if err != unix.EBUSY {
+			return err
+		}
+		if i == 10-1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
 }
 
 // Put unmounts the mount path created for the give id.

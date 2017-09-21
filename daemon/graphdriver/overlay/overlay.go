@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"time"
 
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/daemon/graphdriver/overlayutils"
@@ -375,7 +376,7 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, err erro
 		workDir  = path.Join(dir, "work")
 		opts     = fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lowerDir, upperDir, workDir)
 	)
-	if err := unix.Mount("overlay", mergedDir, "overlay", 0, label.FormatMountLabel(opts, mountLabel)); err != nil {
+	if err := mountRetryEbusy("overlay", mergedDir, "overlay", 0, label.FormatMountLabel(opts, mountLabel)); err != nil {
 		return nil, fmt.Errorf("error creating overlay mount to %s: %v", mergedDir, err)
 	}
 	// chown "workdir/work" to the remapped root UID/GID. Overlay fs inside a
@@ -390,6 +391,21 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, err erro
 	return containerfs.NewLocalContainerFS(mergedDir), nil
 }
 
+func mountRetryEbusy(source string, target string, fstype string, flags uintptr, data string) error {
+	var err error
+	for i := 0; i < 10; i++ {
+		err = unix.Mount(source, target, fstype, flags, data)
+		if err != unix.EBUSY {
+			return err
+		}
+		if i == 10-1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
+}
+
 // Put unmounts the mount path created for the give id.
 func (d *Driver) Put(id string) error {
 	d.locker.Lock(id)
@@ -402,6 +418,7 @@ func (d *Driver) Put(id string) error {
 	if count := d.ctr.Decrement(mountpoint); count > 0 {
 		return nil
 	}
+
 	if err := unix.Unmount(mountpoint, 0); err != nil {
 		logrus.Debugf("Failed to unmount %s overlay: %v", id, err)
 	}
