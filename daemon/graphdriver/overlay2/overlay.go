@@ -622,7 +622,7 @@ func (d *Driver) Put(id string) error {
 	if count := d.ctr.Decrement(mountpoint); count > 0 {
 		return nil
 	}
-	if err := unix.Unmount(mountpoint, unix.MNT_DETACH); err != nil {
+	if err := unix.Unmount(mountpoint, 0); err != nil {
 		logrus.Debugf("Failed to unmount %s overlay: %s - %v", id, mountpoint, err)
 	}
 	return nil
