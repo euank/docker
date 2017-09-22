@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -607,23 +608,20 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, retErr e
 
 func mountRetryEbusy(id string, source string, target string, fstype string, flags uintptr, data string) error {
 	var err error
-	for i := 0; i < 10; i++ {
+	for i := 0; true; i++ {
 		err = unix.Mount(source, target, fstype, flags, data)
 		if err != unix.EBUSY {
 			return err
 		}
-		if i == 10-1 {
-			break
-		}
-		if i == 0 {
-			debugStuff(id)
-		}
+		logrus.Errorf("%s hit EBUSY", id)
+		debugStuff(id)
 		time.Sleep(100 * time.Millisecond)
 	}
 	return err
 }
 
 func debugStuff(id string) {
+	logrus.Errorf("start walk")
 	filepath.Walk("/proc", func(p string, info os.FileInfo, err error) error {
 		if p == "/proc" || p == "/proc/" {
 			return nil
@@ -640,6 +638,7 @@ func debugStuff(id string) {
 		}
 		for _, m := range mi {
 			if strings.Contains(m.Mountpoint, id) {
+				syscall.Kill(pid, syscall.SIGSTOP)
 				logrus.Errorf("%d had %+v", pid, m)
 				exePath, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 				logrus.Errorf("%d was %s", pid, exePath)
@@ -650,6 +649,7 @@ func debugStuff(id string) {
 
 		return nil
 	})
+	logrus.Errorf("finish walk")
 }
 
 // Put unmounts the mount path created for the give id.
