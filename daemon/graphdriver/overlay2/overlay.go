@@ -581,13 +581,13 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, retErr e
 			return nil, fmt.Errorf("cannot mount layer, mount label too large %d", len(mountData))
 		}
 
-		mount = func(source string, target string, mType string, flags uintptr, label string) error {
+		mount = func(id string, source string, target string, mType string, flags uintptr, label string) error {
 			return mountFrom(d.home, source, target, mType, flags, label)
 		}
 		mountTarget = path.Join(id, "merged")
 	}
 
-	if err := mount("overlay", mountTarget, "overlay", 0, mountData); err != nil {
+	if err := mount(id, "overlay", mountTarget, "overlay", 0, mountData); err != nil {
 		return nil, fmt.Errorf("error creating overlay mount to %s: %v", mergedDir, err)
 	}
 
@@ -605,7 +605,7 @@ func (d *Driver) Get(id, mountLabel string) (_ containerfs.ContainerFS, retErr e
 	return containerfs.NewLocalContainerFS(mergedDir), nil
 }
 
-func mountRetryEbusy(source string, target string, fstype string, flags uintptr, data string) error {
+func mountRetryEbusy(id string, source string, target string, fstype string, flags uintptr, data string) error {
 	var err error
 	for i := 0; i < 10; i++ {
 		err = unix.Mount(source, target, fstype, flags, data)
@@ -615,9 +615,41 @@ func mountRetryEbusy(source string, target string, fstype string, flags uintptr,
 		if i == 10-1 {
 			break
 		}
+		if i == 0 {
+			debugStuff(id)
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return err
+}
+
+func debugStuff(id string) {
+	filepath.Walk("/proc", func(p string, info os.FileInfo, err error) error {
+		if p == "/proc" || p == "/proc/" {
+			return nil
+		}
+		pidstr := strings.TrimPrefix(p, "/proc/")
+		pid, err := strconv.Atoi(pidstr)
+		if err != nil {
+			return filepath.SkipDir
+		}
+
+		mi, err := mount.PidMountInfo(pid)
+		if err != nil {
+			return filepath.SkipDir
+		}
+		for _, m := range mi {
+			if strings.Contains(m.Mountpoint, id) {
+				logrus.Errorf("%d had %+v", pid, m)
+				exePath, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+				logrus.Errorf("%d was %s", pid, exePath)
+				mntNs, _ := os.Readlink(fmt.Sprintf("/proc/%d/ns/mnt", pid))
+				logrus.Errorf("%d mntns was %s", pid, mntNs)
+			}
+		}
+
+		return nil
+	})
 }
 
 // Put unmounts the mount path created for the give id.
